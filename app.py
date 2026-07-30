@@ -1,101 +1,263 @@
-from flask import Flask, request, render_template_string
+import os
 import pickle
 import numpy as np
-import os
+from flask import Flask, render_template_string, request, jsonify
 
 app = Flask(__name__)
 
-# Absolute path targeting the exact directory of this script
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-MODEL_PATH = os.path.join(BASE_DIR, "Gradient_Boosting_model.pkl")
+# Model loading with fallback handling
+MODEL_PATH = "Gradient_Boosting_model.pkl"
+model = None
 
-feature_names = [
-    "Ship Mode", "Customer ID", "Customer Name", "Segment", "Country", 
-    "City", "State", "Region", "Category", "Sub-Category", 
+if os.path.exists(MODEL_PATH):
+    try:
+        with open(MODEL_PATH, "rb") as f:
+            model = pickle.load(f)
+    except Exception as e:
+        print(f"Error loading model: {e}")
+else:
+    print(f"Warning: {MODEL_PATH} not found. Please ensure the file is in the root directory.")
+
+# Feature names derived from your model metadata
+FEATURE_NAMES = [
+    "Ship Mode", "Customer ID", "Customer Name", "Segment", "Country",
+    "City", "State", "Region", "Category", "Sub-Category",
     "Product Name", "Quantity", "Discount", "Profit"
 ]
 
-def load_model():
-    if os.path.exists(MODEL_PATH):
-        try:
-            with open(MODEL_PATH, "rb") as f:
-                return pickle.load(f)
-        except Exception as e:
-            print(f"Error loading model: {e}")
-            return None
-    return None
+# Feature definitions for form rendering
+FEATURES = [
+    {"name": "Ship Mode", "type": "number", "default": 0, "step": "1", "hint": "Encoded integer"},
+    {"name": "Customer ID", "type": "number", "default": 0, "step": "1", "hint": "Encoded integer"},
+    {"name": "Customer Name", "type": "number", "default": 0, "step": "1", "hint": "Encoded integer"},
+    {"name": "Segment", "type": "number", "default": 0, "step": "1", "hint": "Encoded integer"},
+    {"name": "Country", "type": "number", "default": 0, "step": "1", "hint": "Encoded integer"},
+    {"name": "City", "type": "number", "default": 0, "step": "1", "hint": "Encoded integer"},
+    {"name": "State", "type": "number", "default": 0, "step": "1", "hint": "Encoded integer"},
+    {"name": "Region", "type": "number", "default": 0, "step": "1", "hint": "Encoded integer"},
+    {"name": "Category", "type": "number", "default": 0, "step": "1", "hint": "Encoded integer"},
+    {"name": "Sub-Category", "type": "number", "default": 0, "step": "1", "hint": "Encoded integer"},
+    {"name": "Product Name", "type": "number", "default": 0, "step": "1", "hint": "Encoded integer"},
+    {"name": "Quantity", "type": "number", "default": 1, "step": "1", "hint": "Units quantity"},
+    {"name": "Discount", "type": "number", "default": 0.0, "step": "0.01", "hint": "e.g., 0.15 for 15%"},
+    {"name": "Profit", "type": "number", "default": 0.0, "step": "0.01", "hint": "Profit value"},
+]
 
-model = load_model()
-
-HTML_TEMPLATE = """
+HTML_LAYOUT = """
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Superstore Sales Predictor</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <title>Gradient Boosting Regressor Dashboard</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
         :root {
-            --bg-color: #0f172a;
-            --card-bg: #1e293b;
-            --accent-color: #0d9488;
-            --accent-hover: #14b8a6;
+            --bg-gradient: linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #311042 100%);
+            --card-bg: rgba(255, 255, 255, 0.05);
+            --card-border: rgba(255, 255, 255, 0.1);
+            --primary: #8b5cf6;
+            --primary-hover: #7c3aed;
+            --accent: #06b6d4;
             --text-main: #f8fafc;
             --text-muted: #94a3b8;
-            --input-bg: #334155;
-            --border-color: #475569;
-            --result-bg: #111827;
+            --input-bg: rgba(15, 23, 42, 0.6);
+            --input-border: rgba(255, 255, 255, 0.15);
+            --input-focus: #8b5cf6;
         }
 
-        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', sans-serif; }
-        body { background-color: var(--bg-color); color: var(--text-main); min-height: 100vh; display: flex; justify-content: center; align-items: center; padding: 2rem 1rem; }
-        .container { background-color: var(--card-bg); border-radius: 12px; box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5); width: 100%; max-width: 900px; padding: 2.5rem; border: 1px solid var(--border-color); }
-        header { text-align: center; margin-bottom: 2rem; }
-        header h1 { font-size: 1.8rem; font-weight: 700; color: var(--text-main); margin-bottom: 0.5rem; }
-        header p { color: var(--text-muted); font-size: 0.95rem; }
-        .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1.25rem; }
-        .form-group { display: flex; flex-direction: column; }
-        .form-group label { font-size: 0.85rem; font-weight: 600; margin-bottom: 0.4rem; color: var(--text-muted); }
-        .form-group input { background-color: var(--input-bg); border: 1px solid var(--border-color); color: var(--text-main); padding: 0.65rem 0.85rem; border-radius: 6px; font-size: 0.95rem; outline: none; transition: border-color 0.2s; }
-        .form-group input:focus { border-color: var(--accent-color); }
-        .btn-submit { grid-column: 1 / -1; margin-top: 1rem; background-color: var(--accent-color); color: #ffffff; border: none; padding: 0.85rem; font-size: 1rem; font-weight: 600; border-radius: 6px; cursor: pointer; transition: background-color 0.2s; }
-        .btn-submit:hover { background-color: var(--accent-hover); }
-        .result-box { margin-top: 2rem; padding: 1.5rem; background-color: var(--result-bg); border-left: 4px solid var(--accent-color); border-radius: 6px; text-align: center; }
-        .result-box h3 { font-size: 0.9rem; color: var(--text-muted); text-transform: uppercase; margin-bottom: 0.3rem; }
-        .result-box .value { font-size: 1.75rem; font-weight: 700; color: var(--accent-hover); }
-        .error-box { margin-top: 2rem; padding: 1rem; background-color: #7f1d1d; color: #fca5a5; border-radius: 6px; font-size: 0.9rem; text-align: center; }
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Inter', sans-serif;
+        }
+
+        body {
+            background: var(--bg-gradient);
+            color: var(--text-main);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 2rem 1rem;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 960px;
+            background: var(--card-bg);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid var(--card-border);
+            border-radius: 24px;
+            padding: 2.5rem;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 2.5rem;
+        }
+
+        .header h1 {
+            font-size: 2.25rem;
+            font-weight: 700;
+            background: linear-gradient(to right, #c084fc, #38bdf8);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 0.5rem;
+        }
+
+        .header p {
+            color: var(--text-muted);
+            font-size: 0.95rem;
+        }
+
+        .grid-form {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1.25rem;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .form-group label {
+            font-size: 0.85rem;
+            font-weight: 500;
+            margin-bottom: 0.4rem;
+            color: #e2e8f0;
+        }
+
+        .form-group input {
+            background: var(--input-bg);
+            border: 1px solid var(--input-border);
+            border-radius: 10px;
+            padding: 0.65rem 0.85rem;
+            color: #fff;
+            font-size: 0.95rem;
+            outline: none;
+            transition: all 0.2s ease;
+        }
+
+        .form-group input:focus {
+            border-color: var(--input-focus);
+            box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.25);
+        }
+
+        .form-group span.hint {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            margin-top: 0.25rem;
+        }
+
+        .actions {
+            margin-top: 2rem;
+            display: flex;
+            justify-content: center;
+        }
+
+        .btn-submit {
+            background: linear-gradient(135deg, var(--primary), var(--accent));
+            color: #ffffff;
+            border: none;
+            border-radius: 12px;
+            padding: 0.85rem 3rem;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+            box-shadow: 0 10px 15px -3px rgba(139, 92, 246, 0.4);
+        }
+
+        .btn-submit:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 15px 20px -3px rgba(139, 92, 246, 0.6);
+        }
+
+        .result-box {
+            margin-top: 2rem;
+            padding: 1.5rem;
+            border-radius: 16px;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--card-border);
+            text-align: center;
+            display: {% if prediction is not none or error is not none %}block{% else %}none{% endif %};
+        }
+
+        .result-box.success {
+            border-color: rgba(52, 211, 153, 0.4);
+            background: rgba(16, 185, 129, 0.1);
+        }
+
+        .result-box.error {
+            border-color: rgba(248, 113, 113, 0.4);
+            background: rgba(239, 68, 68, 0.1);
+        }
+
+        .result-title {
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-muted);
+            margin-bottom: 0.5rem;
+        }
+
+        .result-value {
+            font-size: 2rem;
+            font-weight: 700;
+            color: #34d399;
+        }
+
+        .error-message {
+            color: #f87171;
+            font-weight: 500;
+        }
     </style>
 </head>
 <body>
     <div class="container">
-        <header>
-            <h1>Gradient Boosting Model Inference</h1>
-            <p>Provide numeric or encoded values for model predictions</p>
-        </header>
+        <div class="header">
+            <h1>Gradient Boosting Regressor</h1>
+            <p>Enter model parameters to generate target predictions</p>
+        </div>
 
-        <form action="/predict" method="POST">
-            <div class="form-grid">
+        <form method="POST" action="/predict">
+            <div class="grid-form">
                 {% for feature in features %}
                 <div class="form-group">
-                    <label for="{{ feature }}">{{ feature }}</label>
-                    <input type="number" step="any" id="{{ feature }}" name="{{ feature }}" value="{{ request.form.get(feature, '0') }}" required>
+                    <label for="{{ feature.name }}">{{ feature.name }}</label>
+                    <input 
+                        type="{{ feature.type }}" 
+                        step="{{ feature.step }}" 
+                        id="{{ feature.name }}" 
+                        name="{{ feature.name }}" 
+                        value="{{ request.form.get(feature.name, feature.default) }}" 
+                        required
+                    >
+                    <span class="hint">{{ feature.hint }}</span>
                 </div>
                 {% endfor %}
-                <button type="submit" class="btn-submit">Calculate Prediction</button>
+            </div>
+
+            <div class="actions">
+                <button type="submit" class="btn-submit">Predict Result</button>
             </div>
         </form>
 
-        {% if prediction_text %}
-        <div class="result-box">
-            <h3>Prediction Result</h3>
-            <div class="value">${{ prediction_text }}</div>
+        {% if prediction is not none %}
+        <div class="result-box success">
+            <div class="result-title">Predicted Value</div>
+            <div class="result-value">{{ "%.4f"|format(prediction) }}</div>
         </div>
         {% endif %}
 
-        {% if error_text %}
-        <div class="error-box">
-            {{ error_text }}
+        {% if error %}
+        <div class="result-box error">
+            <div class="error-message">{{ error }}</div>
         </div>
         {% endif %}
     </div>
@@ -104,38 +266,58 @@ HTML_TEMPLATE = """
 """
 
 @app.route("/", methods=["GET"])
-def index():
-    return render_template_string(HTML_TEMPLATE, features=feature_names)
+def home():
+    return render_template_string(HTML_LAYOUT, features=FEATURES, prediction=None, error=None)
 
 @app.route("/predict", methods=["POST"])
 def predict():
-    global model
-    if model is None:
-        model = load_model()
-
     if model is None:
         return render_template_string(
-            HTML_TEMPLATE, 
-            features=feature_names, 
-            error_text="Error: Model file 'GradientBoosting_model.pkl' could not be loaded. Verify file path on deployment server."
+            HTML_LAYOUT, 
+            features=FEATURES, 
+            prediction=None, 
+            error="Model file 'Gradient_Boosting_model.pkl' not loaded on server."
         )
 
     try:
-        input_values = [float(request.form.get(feature, 0)) for feature in feature_names]
-        features_array = np.array([input_values])
-        prediction = model.predict(features_array)[0]
-        
+        # Parse inputs in order matching feature_names_in_
+        input_values = []
+        for feature in FEATURES:
+            val = request.form.get(feature["name"])
+            input_values.append(float(val))
+
+        # Convert to 2D numpy array for prediction
+        input_array = np.array([input_values])
+        prediction = model.predict(input_array)[0]
+
         return render_template_string(
-            HTML_TEMPLATE, 
-            features=feature_names, 
-            prediction_text=f"{prediction:,.2f}"
-        )
-    except Exception as e:
-        return render_template_string(
-            HTML_TEMPLATE, 
-            features=feature_names, 
-            error_text=f"Prediction Error: {str(e)}"
+            HTML_LAYOUT, 
+            features=FEATURES, 
+            prediction=prediction, 
+            error=None
         )
 
-# Required for Vercel serverless execution
-app = app
+    except Exception as e:
+        return render_template_string(
+            HTML_LAYOUT, 
+            features=FEATURES, 
+            prediction=None, 
+            error=f"Prediction Error: {str(e)}"
+        )
+
+@app.route("/api/predict", methods=["POST"])
+def api_predict():
+    """JSON API Endpoint for external requests"""
+    if model is None:
+        return jsonify({"error": "Model not loaded"}), 500
+
+    try:
+        data = request.get_json(force=True)
+        input_values = [float(data[feature["name"]]) for feature in FEATURES]
+        prediction = model.predict(np.array([input_values]))[0]
+        return jsonify({"prediction": float(prediction)})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000, debug=True)
